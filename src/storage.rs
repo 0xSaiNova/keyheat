@@ -1,4 +1,5 @@
 use crate::error::Error;
+use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::fs;
@@ -28,6 +29,16 @@ impl Storage {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY,
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                keystroke_count INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )?;
+
         Ok(Self { conn })
     }
 
@@ -53,6 +64,35 @@ impl Storage {
             }
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn start_session(&mut self, start_time: DateTime<Utc>) -> Result<i64, Error> {
+        self.conn.execute(
+            "INSERT INTO sessions (start_time, keystroke_count) VALUES (?1, 0)",
+            params![start_time.to_rfc3339()],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_session_keystrokes(&mut self, session_id: i64, count: u64) -> Result<(), Error> {
+        self.conn.execute(
+            "UPDATE sessions SET keystroke_count = ?1 WHERE id = ?2",
+            params![count, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn end_session(
+        &mut self,
+        session_id: i64,
+        end_time: DateTime<Utc>,
+        keystroke_count: u64,
+    ) -> Result<(), Error> {
+        self.conn.execute(
+            "UPDATE sessions SET end_time = ?1, keystroke_count = ?2 WHERE id = ?3",
+            params![end_time.to_rfc3339(), keystroke_count, session_id],
+        )?;
         Ok(())
     }
 }

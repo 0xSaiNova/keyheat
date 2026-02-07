@@ -1,4 +1,4 @@
-use crate::aggregator::{record_key, SharedCounts};
+use crate::aggregator::{record_key, SharedAggregator};
 use crate::error::Error;
 use evdev::{Device, InputEventKind, Key};
 use std::fs;
@@ -37,17 +37,14 @@ fn is_keyboard(device: &Device) -> bool {
     keys.contains(Key::KEY_A) && keys.contains(Key::KEY_Z) && keys.contains(Key::KEY_SPACE)
 }
 
-pub fn run_capture(devices: Vec<Device>, counts: SharedCounts) -> Result<(), Error> {
-    // for slice 1, just grab the first keyboard
-    // multi-device polling comes later
+pub fn run_capture(devices: Vec<Device>, agg: SharedAggregator) -> Result<(), Error> {
     let mut device = devices.into_iter().next().ok_or(Error::NoKeyboards)?;
 
     loop {
         for event in device.fetch_events()? {
             if let InputEventKind::Key(key) = event.kind() {
-                // value 1 = key down, 0 = key up, 2 = repeat
                 if event.value() == 1 {
-                    record_key(&counts, key.code());
+                    record_key(&agg, key.code());
                 }
             }
         }

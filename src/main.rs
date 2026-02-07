@@ -4,6 +4,7 @@ mod listener;
 mod storage;
 
 use anyhow::{Context, Result};
+use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use std::thread;
 use std::time::Duration;
@@ -42,11 +43,11 @@ fn run_foreground() -> Result<()> {
     let mut storage = storage::Storage::open().context("failed to open database")?;
     eprintln!("database ready");
 
-    let counts = aggregator::new_shared_counts();
-    let counts_for_listener = counts.clone();
+    let agg = aggregator::new_aggregator();
+    let agg_for_listener = agg.clone();
 
     thread::spawn(move || {
-        if let Err(e) = listener::run_capture(devices, counts_for_listener) {
+        if let Err(e) = listener::run_capture(devices, agg_for_listener) {
             eprintln!("listener error: {e}");
         }
     });
@@ -56,34 +57,45 @@ fn run_foreground() -> Result<()> {
     loop {
         thread::sleep(Duration::from_secs(5));
 
-        let snapshot = aggregator::take_counts(&counts);
+        let mut guard = agg.lock().unwrap();
+
+        if guard.needs_session_start() {
+            let now = Utc::now();
+            match storage.start_session(now) {
+                Ok(session_id) => {
+                    guard.start_session(session_id);
+                    eprintln!("session {session_id} started");
+                }
+                Err(e) => eprintln!("failed to start session: {e}"),
+            }
+        }
+
+        if let Some((session_id, keystroke_count)) = guard.check_idle() {
+            let now = Utc::now();
+            if let Err(e) = storage.end_session(session_id, now, keystroke_count) {
+                eprintln!("failed to end session: {e}");
+            } else {
+                eprintln!("session {session_id} ended ({keystroke_count} keystrokes)");
+            }
+            guard.end_session();
+        } else if let Some((session_id, keystroke_count)) = guard.current_session() {
+            if let Err(e) = storage.update_session_keystrokes(session_id, keystroke_count) {
+                eprintln!("failed to update session: {e}");
+            }
+        }
+
+        let snapshot = guard.take_counts();
+        drop(guard);
+
         if snapshot.is_empty() {
             continue;
         }
 
-        let today = today_str();
+        let today = Local::now().format("%Y-%m-%d").to_string();
         if let Err(e) = storage.flush_counts(&snapshot, &today) {
             eprintln!("flush error: {e}");
         } else {
             eprintln!("flushed {} key types", snapshot.len());
         }
     }
-}
-
-fn today_str() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // days since epoch, then format as YYYY-MM-DD
-    let days = secs / 86400;
-    let years = 1970 + days / 365;
-    let remaining = days % 365;
-    let month = remaining / 30 + 1;
-    let day = remaining % 30 + 1;
-
-    format!("{years:04}-{month:02}-{day:02}")
 }
