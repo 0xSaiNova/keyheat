@@ -84,18 +84,30 @@ fn run_foreground() -> Result<()> {
             }
         }
 
-        let snapshot = guard.take_counts();
+        let key_snapshot = guard.take_counts();
+        let shortcut_snapshot = guard.take_shortcuts();
         drop(guard);
 
-        if snapshot.is_empty() {
+        if key_snapshot.is_empty() && shortcut_snapshot.is_empty() {
             continue;
         }
 
         let today = Local::now().format("%Y-%m-%d").to_string();
-        if let Err(e) = storage.flush_counts(&snapshot, &today) {
-            eprintln!("flush error: {e}");
-        } else {
-            eprintln!("flushed {} key types", snapshot.len());
+
+        if !key_snapshot.is_empty() {
+            if let Err(e) = storage.flush_counts(&key_snapshot, &today) {
+                eprintln!("flush error: {e}");
+            } else {
+                eprintln!("flushed {} key types", key_snapshot.len());
+            }
+        }
+
+        if !shortcut_snapshot.is_empty() {
+            if let Err(e) = storage.flush_shortcuts(&shortcut_snapshot, &today) {
+                eprintln!("shortcut flush error: {e}");
+            } else {
+                eprintln!("flushed {} shortcuts", shortcut_snapshot.len());
+            }
         }
     }
 }

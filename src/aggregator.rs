@@ -12,6 +12,7 @@ pub struct ActiveSession {
 
 pub struct Aggregator {
     key_counts: HashMap<u16, u64>,
+    shortcut_counts: HashMap<String, u64>,
     session: Option<ActiveSession>,
     pending_session_start: bool,
 }
@@ -20,6 +21,7 @@ impl Aggregator {
     pub fn new() -> Self {
         Self {
             key_counts: HashMap::new(),
+            shortcut_counts: HashMap::new(),
             session: None,
             pending_session_start: false,
         }
@@ -39,6 +41,10 @@ impl Aggregator {
                 self.pending_session_start = true;
             }
         }
+    }
+
+    pub fn record_shortcut(&mut self, combo: String) {
+        *self.shortcut_counts.entry(combo).or_insert(0) += 1;
     }
 
     pub fn needs_session_start(&self) -> bool {
@@ -74,6 +80,10 @@ impl Aggregator {
     pub fn take_counts(&mut self) -> HashMap<u16, u64> {
         std::mem::take(&mut self.key_counts)
     }
+
+    pub fn take_shortcuts(&mut self) -> HashMap<String, u64> {
+        std::mem::take(&mut self.shortcut_counts)
+    }
 }
 
 pub type SharedAggregator = Arc<Mutex<Aggregator>>;
@@ -84,4 +94,8 @@ pub fn new_aggregator() -> SharedAggregator {
 
 pub fn record_key(agg: &SharedAggregator, key_code: u16) {
     agg.lock().unwrap().record_key(key_code);
+}
+
+pub fn record_shortcut(agg: &SharedAggregator, combo: String) {
+    agg.lock().unwrap().record_shortcut(combo);
 }

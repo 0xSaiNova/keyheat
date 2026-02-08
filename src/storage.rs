@@ -39,6 +39,16 @@ impl Storage {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS shortcut_counts (
+                combo TEXT NOT NULL,
+                date TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (combo, date)
+            )",
+            [],
+        )?;
+
         Ok(Self { conn })
     }
 
@@ -93,6 +103,28 @@ impl Storage {
             "UPDATE sessions SET end_time = ?1, keystroke_count = ?2 WHERE id = ?3",
             params![end_time.to_rfc3339(), keystroke_count, session_id],
         )?;
+        Ok(())
+    }
+
+    pub fn flush_shortcuts(
+        &mut self,
+        shortcuts: &HashMap<String, u64>,
+        date: &str,
+    ) -> Result<(), Error> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO shortcut_counts (combo, date, count)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (combo, date)
+                 DO UPDATE SET count = count + excluded.count",
+            )?;
+
+            for (combo, &count) in shortcuts {
+                stmt.execute(params![combo, date, count])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 }
