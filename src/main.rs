@@ -51,6 +51,7 @@ enum Commands {
 enum ReportFormat {
     Terminal,
     Json,
+    Html,
 }
 
 fn main() -> Result<()> {
@@ -78,6 +79,7 @@ fn generate_report(week: Option<String>, format: ReportFormat) -> Result<()> {
     match format {
         ReportFormat::Terminal => print_terminal_report(&report_data),
         ReportFormat::Json => print_json_report(&report_data)?,
+        ReportFormat::Html => save_html_report(&report_data)?,
     }
 
     Ok(())
@@ -206,6 +208,30 @@ fn print_json_report(data: &report::ReportData) -> Result<()> {
     println!("  \"finger_travel_mm\": {:.1},", data.finger_travel_mm);
     println!("  \"night_owl_pct\": {:.1}", data.night_owl_pct);
     println!("}}");
+    Ok(())
+}
+
+fn save_html_report(data: &report::ReportData) -> Result<()> {
+    let reports_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("keyheat")
+        .join("reports");
+
+    std::fs::create_dir_all(&reports_dir).context("failed to create reports directory")?;
+
+    let filename = format!("week-{}.html", data.week.start.format("%Y-W%W"));
+    let filepath = reports_dir.join(&filename);
+
+    let html = report::render_html(data);
+    std::fs::write(&filepath, &html).context("failed to write HTML report")?;
+
+    println!("Report saved to: {}", filepath.display());
+
+    if let Err(e) = open::that(&filepath) {
+        eprintln!("Could not open browser: {e}");
+        eprintln!("Open the file manually: {}", filepath.display());
+    }
+
     Ok(())
 }
 

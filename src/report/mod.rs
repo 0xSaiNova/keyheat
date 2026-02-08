@@ -1,7 +1,10 @@
 mod compute;
+mod html;
+mod layout;
 mod query;
 
 pub use compute::build_report;
+pub use html::render as render_html;
 
 use chrono::{DateTime, NaiveDate, Utc};
 
