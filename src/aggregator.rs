@@ -222,7 +222,7 @@ impl Aggregator {
     pub fn start_session(&mut self, db_id: i64) {
         self.session = Some(ActiveSession {
             db_id,
-            keystroke_count: self.key_counts.values().sum(),
+            keystroke_count: 0,
             last_event_at: Instant::now(),
         });
         self.pending_session_start = false;

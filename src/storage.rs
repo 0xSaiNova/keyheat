@@ -32,8 +32,7 @@ impl Storage {
     fn migrate(&mut self) -> Result<(), Error> {
         let version: i32 = self
             .conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap_or(0);
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
         if version < 1 {
             self.conn.execute(
