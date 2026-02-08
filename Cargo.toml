@@ -14,6 +14,7 @@ thiserror = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Threading"] }

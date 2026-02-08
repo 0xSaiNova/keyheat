@@ -357,6 +357,7 @@ dependencies = [
  "clap",
  "dirs",
  "evdev",
+ "libc",
  "open",
  "rusqlite",
  "thiserror",
