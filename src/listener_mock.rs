@@ -12,8 +12,8 @@ impl MockRng {
         use std::time::{SystemTime, UNIX_EPOCH};
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0xDEADBEEF);
         Self { state: seed }
     }
 

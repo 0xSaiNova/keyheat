@@ -1,4 +1,5 @@
 mod aggregator;
+mod daemon;
 mod error;
 mod keycode;
 
@@ -6,6 +7,11 @@ mod keycode;
 mod keymap_linux;
 #[cfg(target_os = "linux")]
 mod listener_linux;
+
+#[cfg(target_os = "windows")]
+mod keymap_windows;
+#[cfg(target_os = "windows")]
+mod listener_windows;
 
 mod listener_mock;
 mod report;
@@ -30,6 +36,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start the daemon in the background
+    Start,
+    /// Stop the running daemon
+    Stop,
+    /// Show daemon status
+    Status,
     /// Run the capture loop in the foreground
     Run {
         /// Use mock listener for testing (generates synthetic events)
@@ -58,9 +70,54 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Start => cmd_start(),
+        Commands::Stop => cmd_stop(),
+        Commands::Status => cmd_status(),
         Commands::Run { mock } => run_foreground(mock),
         Commands::Report { week, format } => generate_report(week, format),
     }
+}
+
+fn cmd_start() -> Result<()> {
+    if let Some(pid) = daemon::check_running() {
+        println!("KeyHeat is already running (PID {pid})");
+        return Ok(());
+    }
+
+    let pid = daemon::spawn_daemon()?;
+    daemon::write_pid(pid)?;
+    println!("KeyHeat started (PID {pid})");
+    Ok(())
+}
+
+fn cmd_stop() -> Result<()> {
+    match daemon::check_running() {
+        Some(pid) => {
+            daemon::kill_process(pid)?;
+            daemon::remove_pid_file()?;
+            println!("KeyHeat stopped.");
+            Ok(())
+        }
+        None => {
+            println!("KeyHeat is not running.");
+            Ok(())
+        }
+    }
+}
+
+fn cmd_status() -> Result<()> {
+    match daemon::check_running() {
+        Some(pid) => {
+            let uptime = daemon::get_process_start_time(pid)
+                .map(daemon::format_uptime)
+                .unwrap_or_else(|| "unknown".to_string());
+            println!("KeyHeat is running (PID {pid}, uptime {uptime})");
+        }
+        None => {
+            println!("KeyHeat is not running.");
+        }
+    }
+    Ok(())
 }
 
 fn generate_report(week: Option<String>, format: ReportFormat) -> Result<()> {
@@ -304,7 +361,19 @@ fn run_foreground(use_mock: bool) -> Result<()> {
             });
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            eprintln!("starting Windows keyboard hook");
+            eprintln!("note: elevated windows (run as admin) will not be captured");
+
+            thread::spawn(move || {
+                if let Err(e) = listener_windows::run_capture(sender) {
+                    eprintln!("listener error: {e}");
+                }
+            });
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             anyhow::bail!(
                 "native keyboard capture not yet supported on this platform. \
