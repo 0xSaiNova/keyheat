@@ -7,6 +7,11 @@ mod keymap_linux;
 #[cfg(target_os = "linux")]
 mod listener_linux;
 
+#[cfg(target_os = "windows")]
+mod keymap_windows;
+#[cfg(target_os = "windows")]
+mod listener_windows;
+
 mod listener_mock;
 mod report;
 mod storage;
@@ -304,7 +309,19 @@ fn run_foreground(use_mock: bool) -> Result<()> {
             });
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            eprintln!("starting Windows keyboard hook");
+            eprintln!("note: elevated windows (run as admin) will not be captured");
+
+            thread::spawn(move || {
+                if let Err(e) = listener_windows::run_capture(sender) {
+                    eprintln!("listener error: {e}");
+                }
+            });
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             anyhow::bail!(
                 "native keyboard capture not yet supported on this platform. \

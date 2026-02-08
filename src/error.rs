@@ -10,4 +10,8 @@ pub enum Error {
 
     #[error("no keyboard devices found")]
     NoKeyboards,
+
+    #[cfg(target_os = "windows")]
+    #[error("hook error: {0}")]
+    Hook(String),
 }
