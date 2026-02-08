@@ -239,7 +239,7 @@ fn print_terminal_report(data: &report::ReportData) {
     println!(
         "  Full report: {}/week-{}.html",
         reports_dir.display(),
-        data.week.start.format("%Y-W%W")
+        data.week.start.format("%Y-W%V")
     );
     println!();
 }
@@ -276,7 +276,7 @@ fn save_html_report(data: &report::ReportData) -> Result<()> {
 
     std::fs::create_dir_all(&reports_dir).context("failed to create reports directory")?;
 
-    let filename = format!("week-{}.html", data.week.start.format("%Y-W%W"));
+    let filename = format!("week-{}.html", data.week.start.format("%Y-W%V"));
     let filepath = reports_dir.join(&filename);
 
     let html = report::render_html(data);
