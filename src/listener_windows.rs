@@ -1,12 +1,13 @@
 use crate::error::Error;
 use crate::keycode::{EventType, KeyEvent, ModifierState};
-use crate::keymap_windows::{map_vk, update_modifier_state};
+use crate::keymap_windows::{map_vk_extended, update_modifier_state};
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 
 static SENDER: OnceLock<Sender<KeyEvent>> = OnceLock::new();
@@ -16,6 +17,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if code >= 0 {
         let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
         let vk = kb.vkCode;
+        let is_extended = (kb.flags & LLKHF_EXTENDED) != 0;
 
         let event_type = match wparam as u32 {
             WM_KEYDOWN | WM_SYSKEYDOWN => EventType::KeyDown,
@@ -25,7 +27,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             }
         };
 
-        let key_code = map_vk(vk);
+        let key_code = map_vk_extended(vk, is_extended);
 
         if let Some(mutex) = MODIFIERS.get() {
             if let Ok(mut modifiers) = mutex.lock() {

@@ -1,6 +1,11 @@
 use crate::keycode::KeyCode;
 
-pub fn map_vk(vk: u32) -> KeyCode {
+pub fn map_vk_extended(vk: u32, is_extended: bool) -> KeyCode {
+    // NumpadEnter is VK_RETURN (0x0D) with extended flag set
+    if vk == 0x0D && is_extended {
+        return KeyCode::NumpadEnter;
+    }
+
     match vk {
         // Letters (0x41-0x5A)
         0x41 => KeyCode::A,
