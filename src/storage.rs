@@ -297,6 +297,10 @@ impl Storage {
         tx.commit()?;
         Ok(())
     }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
 }
 
 fn evdev_code_to_string(code: u32) -> String {
