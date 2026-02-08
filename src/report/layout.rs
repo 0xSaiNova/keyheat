@@ -1,3 +1,4 @@
+#[allow(dead_code)] // x used for layout positioning, may be used in future SVG renderer
 pub struct KeyPosition {
     pub key_code: &'static str,
     pub x: f64,
