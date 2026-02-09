@@ -52,22 +52,18 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 }
 
 pub fn run_capture(sender: Sender<KeyEvent>) -> Result<(), Error> {
-    // Try to set up the hook first before initializing static state
+    SENDER
+        .set(sender)
+        .map_err(|_| Error::Hook("sender already initialized".into()))?;
+
+    MODIFIERS
+        .set(std::sync::Mutex::new(ModifierState::empty()))
+        .map_err(|_| Error::Hook("modifiers already initialized".into()))?;
+
     let hook: HHOOK = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), 0, 0) };
 
     if hook == 0 {
         return Err(Error::Hook("SetWindowsHookExW failed".into()));
-    }
-
-    // Only initialize OnceLocks after successful hook setup
-    if let Err(_) = SENDER.set(sender) {
-        unsafe { UnhookWindowsHookEx(hook); }
-        return Err(Error::Hook("sender already initialized".into()));
-    }
-
-    if let Err(_) = MODIFIERS.set(std::sync::Mutex::new(ModifierState::empty())) {
-        unsafe { UnhookWindowsHookEx(hook); }
-        return Err(Error::Hook("modifiers already initialized".into()));
     }
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
