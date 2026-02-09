@@ -31,6 +31,7 @@ pub struct WpmTracker {
     peak_wpm: f64,
     samples: Vec<WpmSample>,
     last_sample_at: Option<Instant>,
+    last_event_utc: Option<DateTime<Utc>>,
     had_keystrokes_since_sample: bool,
 }
 
@@ -44,6 +45,7 @@ impl WpmTracker {
             peak_wpm: 0.0,
             samples: Vec::new(),
             last_sample_at: None,
+            last_event_utc: None,
             had_keystrokes_since_sample: false,
         }
     }
@@ -55,6 +57,7 @@ impl WpmTracker {
         self.session_start = None;
         self.peak_wpm = 0.0;
         self.last_sample_at = None;
+        self.last_event_utc = None;
         self.had_keystrokes_since_sample = false;
     }
 
@@ -63,8 +66,9 @@ impl WpmTracker {
         self.session_start = Some(Instant::now());
     }
 
-    pub fn record_keystroke(&mut self, timestamp: Instant, session_id: i64) {
+    pub fn record_keystroke(&mut self, timestamp: Instant, utc_time: DateTime<Utc>, session_id: i64) {
         self.recent_timestamps.push_back(timestamp);
+        self.last_event_utc = Some(utc_time);
         self.session_keystrokes += 1;
         self.had_keystrokes_since_sample = true;
 
@@ -123,8 +127,11 @@ impl WpmTracker {
             return;
         }
 
+        // Use the actual event timestamp instead of current time
+        let timestamp = self.last_event_utc.unwrap_or_else(Utc::now);
+
         self.samples.push(WpmSample {
-            timestamp: Utc::now(),
+            timestamp,
             session_id,
             wpm: self.current_wpm,
             keystrokes_in_window: self.recent_timestamps.len() as u32,
@@ -200,7 +207,7 @@ impl Aggregator {
                 // WPM tracking for typing-eligible keys without modifiers held
                 if event.key_code.is_typing_key() && event.modifiers.is_empty() {
                     self.wpm_tracker
-                        .record_keystroke(event.timestamp, session.db_id);
+                        .record_keystroke(event.timestamp, Utc::now(), session.db_id);
                 }
             }
             None => {
@@ -292,8 +299,9 @@ mod tests {
         tracker.start_session();
 
         let start = Instant::now();
+        let utc_start = Utc::now();
         for i in 0..5 {
-            tracker.record_keystroke(start + Duration::from_millis(i * 100), 1);
+            tracker.record_keystroke(start + Duration::from_millis(i * 100), utc_start, 1);
         }
 
         assert_eq!(tracker.current_wpm(), 0.0);
@@ -305,10 +313,11 @@ mod tests {
         tracker.start_session();
 
         let start = Instant::now();
+        let utc_start = Utc::now();
         // 15 keystrokes over 5 seconds = 15/5 * 60 / 5 = 36 WPM
         for i in 0..15 {
             let ts = start + Duration::from_millis(i * 333);
-            tracker.record_keystroke(ts, 1);
+            tracker.record_keystroke(ts, utc_start, 1);
         }
 
         assert!(tracker.current_wpm() > 30.0);
