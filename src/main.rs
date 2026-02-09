@@ -385,6 +385,8 @@ fn run_foreground(use_mock: bool) -> Result<()> {
     eprintln!("capturing keystrokes, ctrl+c to stop");
 
     let mut aggregator = Aggregator::new();
+    let mut db_failure_count = 0;
+    const MAX_DB_FAILURES: u32 = 3;
 
     loop {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -409,8 +411,17 @@ fn run_foreground(use_mock: bool) -> Result<()> {
                 Ok(session_id) => {
                     aggregator.start_session(session_id);
                     eprintln!("session {session_id} started");
+                    db_failure_count = 0;
                 }
-                Err(e) => eprintln!("failed to start session: {e}"),
+                Err(e) => {
+                    db_failure_count += 1;
+                    eprintln!("failed to start session: {e} (failure {db_failure_count}/{MAX_DB_FAILURES})");
+                    if db_failure_count >= MAX_DB_FAILURES {
+                        eprintln!("ERROR: Database persistence has failed {MAX_DB_FAILURES} times consecutively. Exiting to prevent data loss.");
+                        eprintln!("Check if disk is full, database is corrupted, or permissions are incorrect.");
+                        return Err(anyhow::anyhow!("Database persistence failed repeatedly"));
+                    }
+                }
             }
         }
 
@@ -426,15 +437,30 @@ fn run_foreground(use_mock: bool) -> Result<()> {
                 Some(avg_wpm),
                 Some(peak_wpm),
             ) {
-                eprintln!("failed to end session: {e}");
+                db_failure_count += 1;
+                eprintln!("failed to end session: {e} (failure {db_failure_count}/{MAX_DB_FAILURES})");
+                if db_failure_count >= MAX_DB_FAILURES {
+                    eprintln!("ERROR: Database persistence has failed {MAX_DB_FAILURES} times consecutively. Exiting to prevent data loss.");
+                    eprintln!("Check if disk is full, database is corrupted, or permissions are incorrect.");
+                    return Err(anyhow::anyhow!("Database persistence failed repeatedly"));
+                }
             } else {
                 eprintln!(
                     "session {session_id} ended ({keystroke_count} keystrokes, avg {avg_wpm:.1} WPM, peak {peak_wpm:.1} WPM)"
                 );
+                db_failure_count = 0;
             }
         } else if let Some((session_id, keystroke_count)) = aggregator.current_session() {
             if let Err(e) = storage.update_session_keystrokes(session_id, keystroke_count) {
-                eprintln!("failed to update session: {e}");
+                db_failure_count += 1;
+                eprintln!("failed to update session: {e} (failure {db_failure_count}/{MAX_DB_FAILURES})");
+                if db_failure_count >= MAX_DB_FAILURES {
+                    eprintln!("ERROR: Database persistence has failed {MAX_DB_FAILURES} times consecutively. Exiting to prevent data loss.");
+                    eprintln!("Check if disk is full, database is corrupted, or permissions are incorrect.");
+                    return Err(anyhow::anyhow!("Database persistence failed repeatedly"));
+                }
+            } else {
+                db_failure_count = 0;
             }
         }
 
@@ -448,6 +474,7 @@ fn run_foreground(use_mock: bool) -> Result<()> {
             if let Err(e) = storage.flush_counts(&key_snapshot, &today) {
                 eprintln!("flush error: {e}");
             } else {
+                db_failure_count = 0;
                 let wpm = aggregator.current_wpm();
                 if wpm > 0.0 {
                     eprintln!(
@@ -464,6 +491,7 @@ fn run_foreground(use_mock: bool) -> Result<()> {
             if let Err(e) = storage.flush_shortcuts(&shortcut_snapshot, &today) {
                 eprintln!("shortcut flush error: {e}");
             } else {
+                db_failure_count = 0;
                 eprintln!("flushed {} shortcuts", shortcut_snapshot.len());
             }
         }
@@ -472,6 +500,7 @@ fn run_foreground(use_mock: bool) -> Result<()> {
             if let Err(e) = storage.flush_wpm_samples(&wpm_samples) {
                 eprintln!("wpm sample flush error: {e}");
             } else {
+                db_failure_count = 0;
                 eprintln!("flushed {} WPM samples", wpm_samples.len());
             }
         }
