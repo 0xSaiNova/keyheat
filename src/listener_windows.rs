@@ -2,7 +2,7 @@ use crate::error::Error;
 use crate::keycode::{EventType, KeyEvent, ModifierState};
 use crate::keymap_windows::{map_vk_extended, update_modifier_state};
 use std::sync::mpsc::Sender;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
@@ -10,8 +10,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_SYSKEYUP,
 };
 
-static SENDER: OnceLock<Sender<KeyEvent>> = OnceLock::new();
-static MODIFIERS: OnceLock<std::sync::Mutex<ModifierState>> = OnceLock::new();
+// Use Mutex<Option<T>> so we can reset state even after OnceLock initialization
+static SENDER: OnceLock<Mutex<Option<Sender<KeyEvent>>>> = OnceLock::new();
+static MODIFIERS: OnceLock<Mutex<ModifierState>> = OnceLock::new();
 
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 {
@@ -41,8 +42,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 
                 let event = KeyEvent::new(key_code, event_type, *modifiers);
 
-                if let Some(sender) = SENDER.get() {
-                    let _ = sender.send(event);
+                if let Some(sender_mutex) = SENDER.get() {
+                    if let Ok(sender_opt) = sender_mutex.lock() {
+                        if let Some(sender) = sender_opt.as_ref() {
+                            let _ = sender.send(event);
+                        }
+                    }
                 }
             }
         }
@@ -52,22 +57,39 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 }
 
 pub fn run_capture(sender: Sender<KeyEvent>) -> Result<(), Error> {
-    // Try to set up the hook first before initializing static state
+    // Set up the hook first
     let hook: HHOOK = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), 0, 0) };
 
     if hook == 0 {
         return Err(Error::Hook("SetWindowsHookExW failed".into()));
     }
 
-    // Only initialize OnceLocks after successful hook setup
-    if let Err(_) = SENDER.set(sender) {
-        unsafe { UnhookWindowsHookEx(hook); }
-        return Err(Error::Hook("sender already initialized".into()));
+    // Initialize or reuse OnceLock containers, then set the inner values
+    let sender_mutex = SENDER.get_or_init(|| Mutex::new(None));
+    let modifiers_mutex = MODIFIERS.get_or_init(|| Mutex::new(ModifierState::empty()));
+
+    // Try to set the sender
+    {
+        let mut sender_guard = sender_mutex.lock().map_err(|_| {
+            unsafe { UnhookWindowsHookEx(hook); }
+            Error::Hook("failed to lock sender mutex".into())
+        })?;
+
+        if sender_guard.is_some() {
+            unsafe { UnhookWindowsHookEx(hook); }
+            return Err(Error::Hook("hook already running".into()));
+        }
+
+        *sender_guard = Some(sender);
     }
 
-    if let Err(_) = MODIFIERS.set(std::sync::Mutex::new(ModifierState::empty())) {
-        unsafe { UnhookWindowsHookEx(hook); }
-        return Err(Error::Hook("modifiers already initialized".into()));
+    // Reset modifiers to empty state
+    {
+        let mut modifiers_guard = modifiers_mutex.lock().map_err(|_| {
+            unsafe { UnhookWindowsHookEx(hook); }
+            Error::Hook("failed to lock modifiers mutex".into())
+        })?;
+        *modifiers_guard = ModifierState::empty();
     }
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -84,8 +106,13 @@ pub fn run_capture(sender: Sender<KeyEvent>) -> Result<(), Error> {
         }
     }
 
+    // Clean up: unhook and clear sender
     unsafe {
         UnhookWindowsHookEx(hook);
+    }
+
+    if let Ok(mut sender_guard) = sender_mutex.lock() {
+        *sender_guard = None;
     }
 
     Ok(())
