@@ -1,4 +1,5 @@
 mod aggregator;
+mod config;
 mod daemon;
 mod error;
 mod keycode;
@@ -384,7 +385,13 @@ fn run_foreground(use_mock: bool) -> Result<()> {
 
     eprintln!("capturing keystrokes, ctrl+c to stop");
 
-    let mut aggregator = Aggregator::new();
+    // Load configuration
+    let config = config::Config::load();
+    let idle_threshold = Duration::from_secs(config.idle_threshold_secs);
+    let wpm_window = Duration::from_secs(config.wpm_window_secs);
+    let wpm_sample_interval = Duration::from_secs(config.wpm_sample_interval_secs);
+
+    let mut aggregator = Aggregator::new(idle_threshold, wpm_window, wpm_sample_interval);
     let mut db_failure_count = 0;
     const MAX_DB_FAILURES: u32 = 3;
 
@@ -470,38 +477,47 @@ fn run_foreground(use_mock: bool) -> Result<()> {
 
         let today = Local::now().format("%Y-%m-%d").to_string();
 
-        if !key_snapshot.is_empty() {
-            if let Err(e) = storage.flush_counts(&key_snapshot, &today) {
-                eprintln!("flush error: {e}");
-            } else {
-                db_failure_count = 0;
-                let wpm = aggregator.current_wpm();
-                if wpm > 0.0 {
-                    eprintln!(
-                        "flushed {} key types (current: {wpm:.0} WPM)",
-                        key_snapshot.len()
-                    );
-                } else {
-                    eprintln!("flushed {} key types", key_snapshot.len());
+        // Flush all data in a single transaction for atomicity
+        let has_data = !key_snapshot.is_empty() || !shortcut_snapshot.is_empty() || !wpm_samples.is_empty();
+
+        if has_data {
+            match storage.flush_all(&key_snapshot, &shortcut_snapshot, &wpm_samples, &today) {
+                Ok(_) => {
+                    db_failure_count = 0;
+                    let wpm = aggregator.current_wpm();
+
+                    let mut parts = Vec::new();
+                    if !key_snapshot.is_empty() {
+                        parts.push(format!("{} key types", key_snapshot.len()));
+                    }
+                    if !shortcut_snapshot.is_empty() {
+                        parts.push(format!("{} shortcuts", shortcut_snapshot.len()));
+                    }
+                    if !wpm_samples.is_empty() {
+                        parts.push(format!("{} WPM samples", wpm_samples.len()));
+                    }
+
+                    let summary = parts.join(", ");
+                    if wpm > 0.0 {
+                        eprintln!("flushed {summary} (current: {wpm:.0} WPM)");
+                    } else {
+                        eprintln!("flushed {summary}");
+                    }
                 }
-            }
-        }
+                Err(e) => {
+                    db_failure_count += 1;
+                    eprintln!("database flush error: {e} (failure {db_failure_count}/{MAX_DB_FAILURES})");
 
-        if !shortcut_snapshot.is_empty() {
-            if let Err(e) = storage.flush_shortcuts(&shortcut_snapshot, &today) {
-                eprintln!("shortcut flush error: {e}");
-            } else {
-                db_failure_count = 0;
-                eprintln!("flushed {} shortcuts", shortcut_snapshot.len());
-            }
-        }
-
-        if !wpm_samples.is_empty() {
-            if let Err(e) = storage.flush_wpm_samples(&wpm_samples) {
-                eprintln!("wpm sample flush error: {e}");
-            } else {
-                db_failure_count = 0;
-                eprintln!("flushed {} WPM samples", wpm_samples.len());
+                    if db_failure_count >= MAX_DB_FAILURES {
+                        eprintln!("ERROR: Database persistence has failed {MAX_DB_FAILURES} times consecutively.");
+                        eprintln!("This usually indicates:");
+                        eprintln!("  - Disk is full or read-only");
+                        eprintln!("  - Database file is corrupted");
+                        eprintln!("  - Permission issues");
+                        eprintln!("Please check your system and database file at the path above.");
+                        return Err(anyhow::anyhow!("Database persistence failed repeatedly"));
+                    }
+                }
             }
         }
     }

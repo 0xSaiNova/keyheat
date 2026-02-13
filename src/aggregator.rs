@@ -3,9 +3,6 @@ use chrono::{DateTime, Utc};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-const IDLE_THRESHOLD: Duration = Duration::from_secs(30);
-const WPM_WINDOW: Duration = Duration::from_secs(30);
-const WPM_SAMPLE_INTERVAL: Duration = Duration::from_secs(10);
 const WPM_MIN_KEYSTROKES: usize = 10;
 const WPM_MIN_WINDOW: Duration = Duration::from_secs(3);
 
@@ -33,10 +30,12 @@ pub struct WpmTracker {
     last_sample_at: Option<Instant>,
     last_event_utc: Option<DateTime<Utc>>,
     had_keystrokes_since_sample: bool,
+    wpm_window: Duration,
+    wpm_sample_interval: Duration,
 }
 
 impl WpmTracker {
-    pub fn new() -> Self {
+    pub fn new(wpm_window: Duration, wpm_sample_interval: Duration) -> Self {
         Self {
             recent_timestamps: VecDeque::new(),
             current_wpm: 0.0,
@@ -47,6 +46,8 @@ impl WpmTracker {
             last_sample_at: None,
             last_event_utc: None,
             had_keystrokes_since_sample: false,
+            wpm_window,
+            wpm_sample_interval,
         }
     }
 
@@ -74,7 +75,7 @@ impl WpmTracker {
 
         // evict timestamps outside the window
         while let Some(&front) = self.recent_timestamps.front() {
-            if timestamp.duration_since(front) > WPM_WINDOW {
+            if timestamp.duration_since(front) > self.wpm_window {
                 self.recent_timestamps.pop_front();
             } else {
                 break;
@@ -115,7 +116,7 @@ impl WpmTracker {
     fn maybe_emit_sample(&mut self, now: Instant, session_id: i64) {
         let should_sample = match self.last_sample_at {
             None => true,
-            Some(last) => now.duration_since(last) >= WPM_SAMPLE_INTERVAL,
+            Some(last) => now.duration_since(last) >= self.wpm_sample_interval,
         };
 
         if !should_sample {
@@ -166,7 +167,7 @@ impl WpmTracker {
 
 impl Default for WpmTracker {
     fn default() -> Self {
-        Self::new()
+        Self::new(Duration::from_secs(30), Duration::from_secs(10))
     }
 }
 
@@ -176,16 +177,18 @@ pub struct Aggregator {
     session: Option<ActiveSession>,
     pending_session_start: bool,
     wpm_tracker: WpmTracker,
+    idle_threshold: Duration,
 }
 
 impl Aggregator {
-    pub fn new() -> Self {
+    pub fn new(idle_threshold: Duration, wpm_window: Duration, wpm_sample_interval: Duration) -> Self {
         Self {
             key_counts: HashMap::new(),
             shortcut_counts: HashMap::new(),
             session: None,
             pending_session_start: false,
-            wpm_tracker: WpmTracker::new(),
+            wpm_tracker: WpmTracker::new(wpm_window, wpm_sample_interval),
+            idle_threshold,
         }
     }
 
@@ -238,7 +241,7 @@ impl Aggregator {
 
     pub fn check_idle(&self) -> Option<(i64, u64)> {
         let session = self.session.as_ref()?;
-        if session.last_event_at.elapsed() > IDLE_THRESHOLD {
+        if session.last_event_at.elapsed() > self.idle_threshold {
             Some((session.db_id, session.keystroke_count))
         } else {
             None
@@ -275,7 +278,7 @@ impl Aggregator {
 
 impl Default for Aggregator {
     fn default() -> Self {
-        Self::new()
+        Self::new(Duration::from_secs(30), Duration::from_secs(30), Duration::from_secs(10))
     }
 }
 
@@ -295,7 +298,7 @@ mod tests {
 
     #[test]
     fn wpm_tracker_needs_minimum_keystrokes() {
-        let mut tracker = WpmTracker::new();
+        let mut tracker = WpmTracker::new(Duration::from_secs(30), Duration::from_secs(10));
         tracker.start_session();
 
         let start = Instant::now();
@@ -309,7 +312,7 @@ mod tests {
 
     #[test]
     fn wpm_tracker_computes_after_threshold() {
-        let mut tracker = WpmTracker::new();
+        let mut tracker = WpmTracker::new(Duration::from_secs(30), Duration::from_secs(10));
         tracker.start_session();
 
         let start = Instant::now();
@@ -326,7 +329,7 @@ mod tests {
 
     #[test]
     fn shortcuts_not_counted_for_wpm() {
-        let mut agg = Aggregator::new();
+        let mut agg = Aggregator::new(Duration::from_secs(30), Duration::from_secs(30), Duration::from_secs(10));
         agg.start_session(1);
 
         let start = Instant::now();
@@ -349,7 +352,7 @@ mod tests {
 
     #[test]
     fn navigation_keys_not_counted_for_wpm() {
-        let mut agg = Aggregator::new();
+        let mut agg = Aggregator::new(Duration::from_secs(30), Duration::from_secs(30), Duration::from_secs(10));
         agg.start_session(1);
 
         let start = Instant::now();

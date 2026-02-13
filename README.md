@@ -1,6 +1,6 @@
 # KeyHeat
 
-Spotify Wrapped for your keyboard. Tracks typing speed, key frequency, and shortcuts, then generates a weekly report with a heatmap. Everything stays local.
+Lightweight daemon that tracks keyboard usage and generates visual reports. WPM tracking, key frequency heatmaps, and shortcut analytics. All data stays local.
 
 ![KeyHeat Weekly Report](docs/screenshot.png)
 
@@ -12,34 +12,38 @@ cd keyheat
 cargo build --release
 ```
 
+**Linux:** Add user to `input` group: `sudo usermod -a -G input $USER` (then log out/in)
+**Windows:** No setup needed (cannot capture elevated windows)
+**macOS:** Not yet supported
+
 ## Usage
 
 ```bash
-# try it without root (fake keystrokes)
-keyheat run --mock
-
-# run for real on linux
-sudo keyheat run
-
-# generate report
-keyheat report --format html
+keyheat start              # Start daemon
+keyheat status             # Check status
+keyheat report             # Generate report
+keyheat stop               # Stop daemon
 ```
 
-Reports save to `~/.local/share/keyheat/reports/`
+Reports open in your browser. Customize via `~/.config/keyheat/config.toml`
 
-## What the report shows
+## What It Tracks
 
-Keyboard heatmap, WPM stats, activity grid, top shortcuts, finger travel distance, backspace ratio.
-
-Single HTML file with no dependencies. Just open it in a browser.
+- Real-time and historical WPM
+- Key frequency heatmaps
+- Keyboard shortcuts
+- Session patterns and activity
 
 ## Privacy
 
-No network code. Grep the codebase, you wont find any HTTP clients or sockets. Data stays in a local SQLite file. You build it yourself from source.
+No network code. Only key codes tracked, never actual text. Data stored locally in SQLite.
 
-## Roadmap
+**Linux/macOS:** `~/.local/share/keyheat/keyheat.db`
+**Windows:** `%LOCALAPPDATA%\keyheat\keyheat.db`
 
-macOS and Windows support in progress. Daemon mode, config file, and TUI dashboard planned.
+## v1.0 Highlights
+
+Production-ready with atomic database transactions, Windows stability fixes, multi-keyboard support, and configuration file support. See [releases](https://github.com/0xSaiNova/keyheat/releases) for full changelog.
 
 ## License
 
