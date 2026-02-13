@@ -17,11 +17,24 @@ pub fn read_pid() -> Option<u32> {
 }
 
 pub fn write_pid(pid: u32) -> Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
     let path = pid_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create data directory")?;
     }
-    fs::write(&path, pid.to_string()).context("failed to write PID file")?;
+
+    // Use create_new to atomically fail if file already exists
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .context("PID file already exists - daemon may already be running")?;
+
+    file.write_all(pid.to_string().as_bytes())
+        .context("failed to write PID file")?;
+
     Ok(())
 }
 

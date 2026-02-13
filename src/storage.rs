@@ -15,13 +15,23 @@ pub struct Storage {
 
 impl Storage {
     pub fn open() -> Result<Self, Error> {
-        let path = Self::db_path();
+        let path = Self::db_path()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+
+            // Set directory permissions to owner-only on Unix systems
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(parent)?.permissions();
+                perms.set_mode(0o700);
+                fs::set_permissions(parent, perms)?;
+            }
         }
 
         let conn = Connection::open(&path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
 
         let mut storage = Self { conn };
         storage.migrate()?;
@@ -190,13 +200,15 @@ impl Storage {
         Ok(())
     }
 
-    fn db_path() -> PathBuf {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("keyheat")
-            .join("keyheat.db")
+    fn db_path() -> Result<PathBuf, Error> {
+        let base_dir = dirs::data_local_dir()
+            .ok_or_else(|| Error::Database(rusqlite::Error::InvalidPath(
+                "could not determine data directory".into()
+            )))?;
+        Ok(base_dir.join("keyheat").join("keyheat.db"))
     }
 
+    #[allow(dead_code)]
     pub fn flush_counts(
         &mut self,
         counts: &HashMap<KeyCode, u64>,
@@ -250,6 +262,7 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn flush_shortcuts(
         &mut self,
         shortcuts: &HashMap<String, u64>,
@@ -272,6 +285,7 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn flush_wpm_samples(&mut self, samples: &[WpmSample]) -> Result<(), Error> {
         if samples.is_empty() {
             return Ok(());
@@ -293,6 +307,65 @@ impl Storage {
                 ])?;
             }
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn flush_all(
+        &mut self,
+        counts: &HashMap<KeyCode, u64>,
+        shortcuts: &HashMap<String, u64>,
+        wpm_samples: &[WpmSample],
+        date: &str,
+    ) -> Result<(), Error> {
+        // Single transaction for all flush operations to ensure atomicity
+        let tx = self.conn.transaction()?;
+
+        // Flush key counts
+        if !counts.is_empty() {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO key_counts (key_code, date, count)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (key_code, date)
+                 DO UPDATE SET count = count + excluded.count",
+            )?;
+
+            for (key_code, &count) in counts {
+                stmt.execute(params![key_code.to_string(), date, count])?;
+            }
+        }
+
+        // Flush shortcuts
+        if !shortcuts.is_empty() {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO shortcut_counts (combo, date, count)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (combo, date)
+                 DO UPDATE SET count = count + excluded.count",
+            )?;
+
+            for (combo, &count) in shortcuts {
+                stmt.execute(params![combo, date, count])?;
+            }
+        }
+
+        // Flush WPM samples
+        if !wpm_samples.is_empty() {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO wpm_samples (session_id, timestamp, wpm, keystrokes_in_window)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+
+            for sample in wpm_samples {
+                stmt.execute(params![
+                    sample.session_id,
+                    sample.timestamp.to_rfc3339(),
+                    sample.wpm,
+                    sample.keystrokes_in_window,
+                ])?;
+            }
+        }
+
         tx.commit()?;
         Ok(())
     }
